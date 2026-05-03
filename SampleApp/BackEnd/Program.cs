@@ -34,6 +34,10 @@ namespace RunXsltTransform
 
             try
             {
+                // --- ДОПОЛНИТЕЛЬНАЯ ФУНКЦИОНАЛЬНОСТЬ: добавить атрибут SumAmount в корневой элемент Pay ---
+                AddSumAmountToInputFile(inputFile);
+
+                // --- ОСНОВНАЯ ЛОГИКА: преобразование в Employees.xml ---
                 // 1. Загружаем входной XML
                 XDocument inputDoc = XDocument.Load(inputFile);
                 var items = inputDoc.Descendants("item");
@@ -63,7 +67,6 @@ namespace RunXsltTransform
                 }
                 else
                 {
-                    // Создаём новый документ
                     outputDoc = new XDocument(new XElement("Employees"));
                     root = outputDoc.Root;
                 }
@@ -76,13 +79,11 @@ namespace RunXsltTransform
                     string name = group.Key.Name;
                     string surname = group.Key.Surname;
 
-                    // Ищем существующего сотрудника
                     XElement existingEmployee = root.Elements("Employee")
                         .FirstOrDefault(e => (string)e.Attribute("name") == name && (string)e.Attribute("surname") == surname);
 
                     if (existingEmployee == null)
                     {
-                        // Создаём нового сотрудника
                         XElement newEmployee = new XElement("Employee",
                             new XAttribute("name", name),
                             new XAttribute("surname", surname)
@@ -108,7 +109,6 @@ namespace RunXsltTransform
                     }
                     else
                     {
-                        // Сотрудник уже есть – добавляем только новые salary (по mount)
                         bool employeeChanged = false;
                         double currentSum = ParseAmount((string)existingEmployee.Attribute("SumSalary"));
 
@@ -118,7 +118,6 @@ namespace RunXsltTransform
                             string amountStr = (string)item.Attribute("amount");
                             double amount = ParseAmount(amountStr);
 
-                            // Проверяем, есть ли уже salary с таким mount у существующего сотрудника
                             bool mountExists = existingEmployee.Elements("salary")
                                 .Any(s => (string)s.Attribute("mount") == mount);
 
@@ -140,14 +139,13 @@ namespace RunXsltTransform
 
                         if (employeeChanged)
                         {
-                            // Обновляем SumSalary
                             existingEmployee.Attribute("SumSalary").Value = currentSum.ToString(CultureInfo.InvariantCulture);
                             anyChanges = true;
                         }
                     }
                 }
 
-                // 4. Сохраняем, если были изменения
+                // 4. Сохраняем Employees.xml, если были изменения
                 if (anyChanges)
                 {
                     outputDoc.Save(outputFile);
@@ -165,6 +163,42 @@ namespace RunXsltTransform
                 Console.WriteLine($"Error: {ex.Message}");
                 return 1;
             }
+        }
+
+        /// <summary>
+        /// Добавляет (или обновляет) атрибут SumAmount в корневой элемент Pay.
+        /// Значение атрибута = сумма всех amount из всех элементов item.
+        /// </summary>
+        static void AddSumAmountToInputFile(string filePath)
+        {
+            // Загружаем документ
+            XDocument doc = XDocument.Load(filePath);
+            XElement root = doc.Root;
+            if (root == null || root.Name.LocalName != "Pay")
+            {
+                Console.WriteLine("Warning: Root element is not <Pay>. Skipping SumAmount addition.");
+                return;
+            }
+
+            // Вычисляем сумму всех amount
+            double totalSum = 0.0;
+            var allItems = doc.Descendants("item");
+            foreach (var item in allItems)
+            {
+                string amountStr = (string)item.Attribute("amount");
+                totalSum += ParseAmount(amountStr);
+            }
+
+            // Добавляем или обновляем атрибут SumAmount
+            XAttribute sumAttr = root.Attribute("SumAmount");
+            if (sumAttr == null)
+                root.Add(new XAttribute("SumAmount", totalSum.ToString(CultureInfo.InvariantCulture)));
+            else
+                sumAttr.Value = totalSum.ToString(CultureInfo.InvariantCulture);
+
+            // Сохраняем файл (перезаписываем)
+            doc.Save(filePath);
+            Console.WriteLine($"Added/updated SumAmount = {totalSum} in {filePath}");
         }
 
         static string GetCorrectMount(XElement item)
