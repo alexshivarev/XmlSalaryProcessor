@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Pay>
+  <item name="Lena" amount="1000" mount="march" /> <!-- нет surname -->
+  <item surname="Ivanova" amount="2000" mount="april" /> <!-- нет name -->
+  <item name="Masha" surname="Ivanova" mount="may" /> <!-- нет amount -->
+</Pay>

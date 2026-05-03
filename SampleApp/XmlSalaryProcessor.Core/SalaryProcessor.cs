@@ -9,14 +9,10 @@ namespace XmlSalaryProcessor.Core
 {
     public static class SalaryProcessor
     {
-        /// <summary>
-        /// Парсит строку с суммой, нормализуя запятую как десятичный разделитель.
-        /// </summary>
         public static decimal ParseAmountDecimal(string? amountStr)
         {
             if (string.IsNullOrWhiteSpace(amountStr))
                 return 0;
-            // Замена запятой на точку для инвариантного парсинга
             string normalized = amountStr.Replace(',', '.');
             if (decimal.TryParse(normalized, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal result))
                 return result;
@@ -24,52 +20,102 @@ namespace XmlSalaryProcessor.Core
             return result;
         }
 
-        /// <summary>
-        /// Добавляет атрибут SumAmount в корневой элемент входного XML-файла.
-        /// </summary>
-        public static void AddSumAmountToInputFile(string inputFilePath)
+        // --- AddSumAmountToInputFile (консоль) ---
+        public static void AddSumAmountToInputFile(string inputFilePath, Action<string>? onWarning = null)
         {
-            var doc = XDocument.Load(inputFilePath);
+            XDocument doc;
+            try
+            {
+                doc = XDocument.Load(inputFilePath);
+            }
+            catch (Exception ex)
+            {
+                onWarning?.Invoke($"Ошибка загрузки XML: {ex.Message}");
+                throw;
+            }
             var root = doc.Root;
-            if (root == null) throw new InvalidOperationException("XML документ не имеет корневого элемента.");
-            decimal sum = root.Descendants("item")
-                .Sum(item => ParseAmountDecimal(item.Attribute("amount")?.Value));
+            if (root == null)
+            {
+                onWarning?.Invoke("Файл не содержит корневого элемента.");
+                return;
+            }
+            decimal sum = 0;
+            int itemCount = 0;
+            foreach (var item in root.Descendants("item"))
+            {
+                itemCount++;
+                string? amountStr = item.Attribute("amount")?.Value;
+                decimal val = ParseAmountDecimal(amountStr);
+                if (val == 0 && !string.IsNullOrWhiteSpace(amountStr) && amountStr != "0")
+                    onWarning?.Invoke($"Предупреждение в строке {itemCount}: значение amount '{amountStr}' не распознано, считается как 0.");
+                sum += val;
+            }
             root.SetAttributeValue("SumAmount", sum.ToString(CultureInfo.InvariantCulture));
             doc.Save(inputFilePath);
         }
 
-        /// <summary>
-        /// Перегрузка для работы с XDocument (веб-версия).
-        /// </summary>
-        public static void AddSumAmountToXDocument(XDocument doc)
+        public static void AddSumAmountToXDocument(XDocument doc, Action<string>? onWarning = null)
         {
             var root = doc.Root;
             if (root == null) return;
-            decimal sum = root.Descendants("item")
-                .Sum(item => ParseAmountDecimal(item.Attribute("amount")?.Value));
+            decimal sum = 0;
+            int idx = 0;
+            foreach (var item in root.Descendants("item"))
+            {
+                idx++;
+                string? amountStr = item.Attribute("amount")?.Value;
+                decimal val = ParseAmountDecimal(amountStr);
+                if (val == 0 && !string.IsNullOrWhiteSpace(amountStr) && amountStr != "0")
+                    onWarning?.Invoke($"Предупреждение в строке {idx}: значение amount '{amountStr}' не распознано, считается как 0.");
+                sum += val;
+            }
             root.SetAttributeValue("SumAmount", sum.ToString(CultureInfo.InvariantCulture));
         }
 
-        /// <summary>
-        /// Обновляет или создаёт Employees.xml в соответствии с требуемым форматом.
-        /// </summary>
-        public static void GenerateOrUpdateEmployeesFile(string sourceXmlPath, string employeesXmlPath)
+        // --- GenerateOrUpdateEmployeesFile (консоль) ---
+        public static void GenerateOrUpdateEmployeesFile(string sourceXmlPath, string employeesXmlPath, Action<string>? onWarning = null)
         {
-            var sourceDoc = XDocument.Load(sourceXmlPath);
+            XDocument sourceDoc;
+            try
+            {
+                sourceDoc = XDocument.Load(sourceXmlPath);
+            }
+            catch (Exception ex)
+            {
+                onWarning?.Invoke($"Ошибка загрузки XML: {ex.Message}");
+                throw;
+            }
+
             var items = sourceDoc.Descendants("item").ToList();
-            if (!items.Any()) return;
+            if (!items.Any())
+            {
+                onWarning?.Invoke("В файле нет элементов <item>.");
+                // Всё равно создаём пустой Employees.xml
+                var emptyDoc = new XDocument(new XElement("Employees"));
+                emptyDoc.Save(employeesXmlPath);
+                return;
+            }
 
-            // Группировка по name + surname
-            var grouped = items
-                .GroupBy(item => new
+            // Группировка с сохранением номеров строк
+            var grouped = new Dictionary<string, List<(XElement Item, int LineNumber)>>();
+            int lineNumber = 0;
+            foreach (var item in items)
+            {
+                lineNumber++;
+                string name = item.Attribute("name")?.Value ?? "";
+                string surname = item.Attribute("surname")?.Value ?? "";
+                if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(surname))
                 {
-                    Name = item.Attribute("name")?.Value ?? "",
-                    Surname = item.Attribute("surname")?.Value ?? ""
-                })
-                .Where(g => !string.IsNullOrWhiteSpace(g.Key.Name) || !string.IsNullOrWhiteSpace(g.Key.Surname))
-                .Select(g => new { g.Key.Name, g.Key.Surname, Items = g.ToList() })
-                .ToList();
+                    onWarning?.Invoke($"Строка {lineNumber}: пропущена (отсутствуют name и surname).");
+                    continue;
+                }
+                string key = $"{name}|{surname}";
+                if (!grouped.ContainsKey(key))
+                    grouped[key] = new List<(XElement, int)>();
+                grouped[key].Add((item, lineNumber));
+            }
 
+            // Загрузка существующего Employees.xml или создание нового
             XDocument employeesDoc;
             if (File.Exists(employeesXmlPath))
                 employeesDoc = XDocument.Load(employeesXmlPath);
@@ -83,10 +129,12 @@ namespace XmlSalaryProcessor.Core
                 employeesDoc.Add(root);
             }
 
-            foreach (var empGroup in grouped)
+            foreach (var kvp in grouped)
             {
-                string name = empGroup.Name;
-                string surname = empGroup.Surname;
+                string fullName = kvp.Key;
+                string[] parts = fullName.Split('|');
+                string name = parts[0];
+                string surname = parts[1];
                 var empElement = root.Elements("Employee")
                     .FirstOrDefault(e => (string?)e.Attribute("name") == name && (string?)e.Attribute("surname") == surname);
                 if (empElement == null)
@@ -97,30 +145,47 @@ namespace XmlSalaryProcessor.Core
                     root.Add(empElement);
                 }
 
-                // Добавляем новые salary (без дублей по mount)
-                foreach (var item in empGroup.Items)
+                // Для отслеживания уже добавленных месяцев и их строк
+                var existingMonths = empElement.Elements("salary")
+                    .ToDictionary(s => (string?)s.Attribute("mount") ?? "", s => s);
+
+                foreach (var (item, line) in kvp.Value)
                 {
                     string? mount = item.Attribute("mount")?.Value;
-                    if (string.IsNullOrEmpty(mount)) continue;
+                    if (string.IsNullOrEmpty(mount))
+                    {
+                        onWarning?.Invoke($"Строка {line}: пропущена (отсутствует атрибут mount).");
+                        continue;
+                    }
                     string? amountStr = item.Attribute("amount")?.Value;
-                    if (amountStr == null) continue;
+                    if (string.IsNullOrEmpty(amountStr))
+                    {
+                        onWarning?.Invoke($"Строка {line}: пропущена (отсутствует атрибут amount).");
+                        continue;
+                    }
 
-                    // Проверка существования записи за этот mount у данного сотрудника
-                    var existingSalary = empElement.Elements("salary")
-                        .FirstOrDefault(s => (string?)s.Attribute("mount") == mount);
-                    if (existingSalary != null) continue; // пропускаем дубликат
+                    if (existingMonths.ContainsKey(mount))
+                    {
+                        // Дубликат: находим номер строки из существующей записи (если сохранили)
+                        // Для простоты выведем сообщение, но номер строки дубликата мы уже знаем (line)
+                        onWarning?.Invoke($"Строка {line}: дубликат месяца '{mount}' для сотрудника {name} {surname}. Запись пропущена.");
+                        continue;
+                    }
 
-                    empElement.Add(new XElement("salary",
-                        new XAttribute("amount", amountStr), // оригинальная строка
-                        new XAttribute("mount", mount)));
+                    // Добавляем новую запись
+                    var salaryElem = new XElement("salary",
+                        new XAttribute("amount", amountStr),
+                        new XAttribute("mount", mount));
+                    empElement.Add(salaryElem);
+                    existingMonths[mount] = salaryElem; // сохраняем для последующих дубликатов
                 }
 
                 // Пересчёт SumSalary
-                decimal total = 0m;
+                decimal total = 0;
                 foreach (var salary in empElement.Elements("salary"))
                 {
-                    string? amountAttr = salary.Attribute("amount")?.Value;
-                    total += ParseAmountDecimal(amountAttr);
+                    string? amt = salary.Attribute("amount")?.Value;
+                    total += ParseAmountDecimal(amt);
                 }
                 empElement.SetAttributeValue("SumSalary", total.ToString(CultureInfo.InvariantCulture));
             }
@@ -128,61 +193,82 @@ namespace XmlSalaryProcessor.Core
             employeesDoc.Save(employeesXmlPath);
         }
 
-        /// <summary>
-        /// Генерирует XDocument для Employees.xml (веб-версия).
-        /// </summary>
-        public static XDocument GenerateEmployeesDocument(XDocument sourceDoc)
+        // --- GenerateEmployeesDocument (веб) ---
+        public static XDocument GenerateEmployeesDocument(XDocument sourceDoc, Action<string>? onWarning = null)
         {
             var items = sourceDoc.Descendants("item").ToList();
-            if (!items.Any()) return new XDocument(new XElement("Employees"));
+            if (!items.Any())
+            {
+                onWarning?.Invoke("В файле нет элементов <item>.");
+                return new XDocument(new XElement("Employees"));
+            }
 
-            var grouped = items
-                .GroupBy(item => new
+            var grouped = new Dictionary<string, List<(XElement Item, int LineNumber)>>();
+            int lineNumber = 0;
+            foreach (var item in items)
+            {
+                lineNumber++;
+                string name = item.Attribute("name")?.Value ?? "";
+                string surname = item.Attribute("surname")?.Value ?? "";
+                if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(surname))
                 {
-                    Name = item.Attribute("name")?.Value ?? "",
-                    Surname = item.Attribute("surname")?.Value ?? ""
-                })
-                .Where(g => !string.IsNullOrWhiteSpace(g.Key.Name) || !string.IsNullOrWhiteSpace(g.Key.Surname))
-                .Select(g => new { g.Key.Name, g.Key.Surname, Items = g.ToList() })
-                .ToList();
+                    onWarning?.Invoke($"Строка {lineNumber}: пропущена (отсутствуют name и surname).");
+                    continue;
+                }
+                string key = $"{name}|{surname}";
+                if (!grouped.ContainsKey(key))
+                    grouped[key] = new List<(XElement, int)>();
+                grouped[key].Add((item, lineNumber));
+            }
 
             var employeesDoc = new XDocument(new XElement("Employees"));
             var root = employeesDoc.Root!;
 
-            foreach (var empGroup in grouped)
+            foreach (var kvp in grouped)
             {
+                string[] parts = kvp.Key.Split('|');
+                string name = parts[0];
+                string surname = parts[1];
                 var empElement = new XElement("Employee",
-                    new XAttribute("name", empGroup.Name),
-                    new XAttribute("surname", empGroup.Surname));
+                    new XAttribute("name", name),
+                    new XAttribute("surname", surname));
 
-                var processedMounts = new HashSet<string>();
-                foreach (var item in empGroup.Items)
+                var addedMounts = new HashSet<string>();
+                foreach (var (item, line) in kvp.Value)
                 {
                     string? mount = item.Attribute("mount")?.Value;
-                    if (string.IsNullOrEmpty(mount)) continue;
-                    if (processedMounts.Contains(mount)) continue;
-                    processedMounts.Add(mount);
-
+                    if (string.IsNullOrEmpty(mount))
+                    {
+                        onWarning?.Invoke($"Строка {line}: пропущена (отсутствует mount).");
+                        continue;
+                    }
                     string? amountStr = item.Attribute("amount")?.Value;
-                    if (amountStr == null) continue;
+                    if (string.IsNullOrEmpty(amountStr))
+                    {
+                        onWarning?.Invoke($"Строка {line}: пропущена (отсутствует amount).");
+                        continue;
+                    }
+
+                    if (addedMounts.Contains(mount))
+                    {
+                        onWarning?.Invoke($"Строка {line}: дубликат месяца '{mount}' для сотрудника {name} {surname}. Запись пропущена.");
+                        continue;
+                    }
 
                     empElement.Add(new XElement("salary",
                         new XAttribute("amount", amountStr),
                         new XAttribute("mount", mount)));
+                    addedMounts.Add(mount);
                 }
 
-                // Подсчёт суммы
-                decimal total = 0m;
+                decimal total = 0;
                 foreach (var salary in empElement.Elements("salary"))
                 {
-                    string? amountAttr = salary.Attribute("amount")?.Value;
-                    total += ParseAmountDecimal(amountAttr);
+                    total += ParseAmountDecimal(salary.Attribute("amount")?.Value);
                 }
                 empElement.SetAttributeValue("SumSalary", total.ToString(CultureInfo.InvariantCulture));
-
                 root.Add(empElement);
             }
-
             return employeesDoc;
         }
     }

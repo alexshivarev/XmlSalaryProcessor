@@ -1,6 +1,7 @@
 @page "/"
 @using System.Xml.Linq
 @using System.Text
+@using System.Globalization
 @inject IJSRuntime JS
 
 <h3>Salary Processor Web</h3>
@@ -16,34 +17,52 @@
 {
     <div class="row mt-3">
         <div class="col">
-            <pre>@log</pre>
+            <pre class="border p-2 bg-light" style="white-space:pre-wrap">@log</pre>
         </div>
     </div>
 }
 
-@if (summaryData != null && summaryData.Any())
+@if (matrixData != null && matrixData.Rows.Any())
 {
     <div class="row mt-3">
         <div class="col">
-            <h4>Сводка по сотрудникам</h4>
-            <table class="table table-bordered">
+            <h4>Сводка зарплат по сотрудникам и месяцам</h4>
+            <table class="table table-bordered table-striped">
                 <thead>
                     <tr>
                         <th>Имя</th>
                         <th>Фамилия</th>
-                        <th>Суммарная зарплата</th>
+                        @foreach (var month in matrixData.Months)
+                        {
+                            <th>@month</th>
+                        }
+                        <th>Итого (сотрудник)</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var emp in summaryData)
+                    @foreach (var row in matrixData.Rows)
                     {
                         <tr>
-                            <td>@emp.Name</td>
-                            <td>@emp.Surname</td>
-                            <td>@emp.SumSalary.ToString("F2")</td>
+                            <td>@row.Name</td>
+                            <td>@row.Surname</td>
+                            @foreach (var month in matrixData.Months)
+                            {
+                                <td class="text-end">@row.MonthAmounts.GetValueOrDefault(month, 0).ToString("F2")</td>
+                            }
+                            <td class="text-end fw-bold">@row.TotalEmployee.ToString("F2")</td>
                         </tr>
                     }
                 </tbody>
+                <tfoot>
+                    <tr class="table-secondary">
+                        <th colspan="2">Итого по месяцам</th>
+                        @foreach (var month in matrixData.Months)
+                        {
+                            <th class="text-end">@matrixData.MonthTotals.GetValueOrDefault(month, 0).ToString("F2")</th>
+                        }
+                        <th class="text-end">@matrixData.GrandTotal.ToString("F2")</th>
+                    </tr>
+                </tfoot>
             </table>
             <button class="btn btn-success" @onclick="DownloadEmployeesXml">Скачать Employees.xml</button>
         </div>
@@ -51,11 +70,11 @@
 }
 
 @code {
-    private IBrowserFile selectedFile;
+    private IBrowserFile? selectedFile;
     private bool processing = false;
     private string log = "";
-    private List<EmployeeSummary> summaryData;
-    private XDocument generatedEmployeesDoc;
+    private MatrixData? matrixData;
+    private XDocument? generatedEmployeesDoc;
 
     private void OnFileSelected(InputFileChangeEventArgs e)
     {
@@ -63,78 +82,147 @@
         log = $"Выбран файл: {selectedFile.Name} ({selectedFile.Size} bytes)";
     }
 
-private async Task ProcessFile()
-{
-    if (selectedFile == null)
+    private async Task ProcessFile()
     {
-        log = "Выберите файл.";
-        return;
-    }
-
-    processing = true;
-    log = "Обработка...";
-
-    try
-    {
-        // Асинхронно читаем весь файл в MemoryStream
-        using var stream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-        var memoryStream = new MemoryStream();
-        await stream.CopyToAsync(memoryStream);
-        memoryStream.Position = 0; // Сбрасываем позицию в начало
-
-        // Теперь можно синхронно загрузить XDocument из MemoryStream
-        var sourceDoc = XDocument.Load(memoryStream);
-
-        // 1. Добавляем атрибут SumAmount в корневой элемент исходного документа
-        SalaryProcessor.AddSumAmountToXDocument(sourceDoc);
-        log += $"\nАтрибут SumAmount добавлен: {sourceDoc.Root?.Attribute("SumAmount")?.Value}";
-
-        // 2. Генерируем Employees.xml в памяти через библиотечный метод
-        generatedEmployeesDoc = SalaryProcessor.GenerateEmployeesDocument(sourceDoc);
-        log += "\nEmployees.xml сгенерирован.";
-
-        // 3. Формируем сводку для таблицы (из сгенерированного документа)
-        summaryData = new List<EmployeeSummary>();
-        var root = generatedEmployeesDoc.Root;
-        if (root != null)
+        if (selectedFile == null)
         {
-            foreach (var emp in root.Elements("Employee"))
-            {
-                summaryData.Add(new EmployeeSummary
-                {
-                    Name = emp.Attribute("name")?.Value ?? "",
-                    Surname = emp.Attribute("surname")?.Value ?? "",
-                    SumSalary = decimal.Parse(emp.Attribute("SumSalary")?.Value ?? "0", System.Globalization.CultureInfo.InvariantCulture)
-                });
-            }
+            log = "Выберите файл.";
+            return;
         }
 
-        log += "\nОбработка завершена успешно!";
+        processing = true;
+        var warnings = new List<string>();
+        log = "Обработка...";
+
+        try
+        {
+            using var stream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            memoryStream.Position = 0;
+
+            XDocument sourceDoc;
+            try
+            {
+                sourceDoc = XDocument.Load(memoryStream);
+            }
+            catch (Exception ex)
+            {
+                log = $"Ошибка загрузки XML: файл невалидный.\n{ex.Message}";
+                return;
+            }
+
+            void AddWarning(string msg) => warnings.Add(msg);
+
+            SalaryProcessor.AddSumAmountToXDocument(sourceDoc, AddWarning);
+            generatedEmployeesDoc = SalaryProcessor.GenerateEmployeesDocument(sourceDoc, AddWarning);
+
+            // Построение сводной матрицы из generatedEmployeesDoc
+            matrixData = BuildMatrixData(generatedEmployeesDoc);
+
+            log = "Обработка завершена.\n";
+            if (warnings.Any())
+                log += "Предупреждения:\n" + string.Join("\n", warnings);
+            else
+                log += "Ошибок и предупреждений нет.";
+        }
+        catch (Exception ex)
+        {
+            log = $"Ошибка: {ex.Message}";
+        }
+        finally
+        {
+            processing = false;
+        }
     }
-    catch (Exception ex)
+
+private IEnumerable<string> OrderMonthsChronologically(HashSet<string> months)
+{
+    // Русский порядок
+    var rusOrder = new[] { "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь" };
+    // Английский порядок
+    var engOrder = new[] { "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december" };
+    
+    // Определяем язык по первому встречному месяцу (предполагаем, что все месяцы на одном языке)
+    bool useEnglish = months.Any(m => engOrder.Contains(m, StringComparer.OrdinalIgnoreCase));
+    var orderList = useEnglish ? engOrder : rusOrder;
+    
+    return months.OrderBy(m => Array.IndexOf(orderList, m.ToLowerInvariant()));
+}
+
+private MatrixData BuildMatrixData(XDocument employeesDoc)
+{
+    var rows = new List<MatrixRow>();
+    var monthTotals = new Dictionary<string, decimal>();
+    var allMonths = new HashSet<string>();
+    var grandTotal = 0m;
+
+    var root = employeesDoc.Root;
+    if (root == null) return new MatrixData();
+
+    foreach (var emp in root.Elements("Employee"))
     {
-        log += $"\nОшибка: {ex.Message}";
+        string name = emp.Attribute("name")?.Value ?? "";
+        string surname = emp.Attribute("surname")?.Value ?? "";
+        var monthAmounts = new Dictionary<string, decimal>();
+        decimal totalEmployee = 0;
+
+        foreach (var salary in emp.Elements("salary"))
+        {
+            string? month = salary.Attribute("mount")?.Value;
+            if (string.IsNullOrEmpty(month)) continue;
+            decimal amount = SalaryProcessor.ParseAmountDecimal(salary.Attribute("amount")?.Value);
+            
+            monthAmounts[month] = amount;
+            totalEmployee += amount;
+            allMonths.Add(month);
+            
+            monthTotals[month] = monthTotals.GetValueOrDefault(month) + amount;
+        }
+        grandTotal += totalEmployee;
+        rows.Add(new MatrixRow
+        {
+            Name = name,
+            Surname = surname,
+            MonthAmounts = monthAmounts,
+            TotalEmployee = totalEmployee
+        });
     }
-    finally
+
+    // Хронологическая сортировка месяцев
+    var orderedMonths = OrderMonthsChronologically(allMonths).ToList();
+
+    return new MatrixData
     {
-        processing = false;
-    }
+        Months = orderedMonths,
+        Rows = rows,
+        MonthTotals = monthTotals,
+        GrandTotal = grandTotal
+    };
 }
 
     private async Task DownloadEmployeesXml()
     {
         if (generatedEmployeesDoc == null) return;
-
         var xmlString = generatedEmployeesDoc.ToString();
         var bytes = Encoding.UTF8.GetBytes(xmlString);
         var base64 = Convert.ToBase64String(bytes);
         await JS.InvokeVoidAsync("downloadFileFromBase64", "Employees.xml", base64);
     }
 
-    public class EmployeeSummary
+    public class MatrixData
     {
-        public string Name { get; set; }
-        public string Surname { get; set; }
-        public decimal SumSalary { get; set; }
+        public List<string> Months { get; set; } = new();
+        public List<MatrixRow> Rows { get; set; } = new();
+        public Dictionary<string, decimal> MonthTotals { get; set; } = new();
+        public decimal GrandTotal { get; set; }
+    }
+
+    public class MatrixRow
+    {
+        public string Name { get; set; } = "";
+        public string Surname { get; set; } = "";
+        public Dictionary<string, decimal> MonthAmounts { get; set; } = new();
+        public decimal TotalEmployee { get; set; }
     }
 }

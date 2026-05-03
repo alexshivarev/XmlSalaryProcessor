@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Pay>
+  <item name="Lena" surname="Ivanova" amount="abc" mount="january" />
+  <item name="Lena" surname="Ivanova" amount="12,34.56" mount="february" /> <!-- двойной разделитель -->
+</Pay>

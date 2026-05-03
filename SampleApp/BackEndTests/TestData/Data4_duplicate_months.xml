@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Pay SumAmount="3000">
+  <item name="Lena" surname="Ivanova" amount="1000" mount="january" />
+  <item name="Lena" surname="Ivanova" amount="2000" mount="january" />
+  <!-- дубль -->
+</Pay>
