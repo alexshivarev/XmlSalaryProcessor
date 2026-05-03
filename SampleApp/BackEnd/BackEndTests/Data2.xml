@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Pay>
+	<january>
+		<item name="Lena" surname="Ivanova" amount="2001" mount="january"/>
+		<item name="Masha" surname="Ivanova" amount="2000.0" mount="january"/>
+	</january>
+	<february>
+		<item name="Lena" surname="Ivanova" amount="3001,10" mount="january"/>
+		<item name="Masha" surname="Ivanova" amount="3000" mount="january"/>
+	</february>
+	<march>
+		<item name="Lena" surname="Ivanova" amount="1001.1" mount="march"/>
+		<item name="Masha" surname="Ivanova" amount="1000" mount="march"/>
+	</march>
+    <april>
+		<item name="Lena" surname="Ivanova" amount="1001.1" mount="march"/>
+		<item name="Masha" surname="Ivanova" amount="1000" mount="march"/>
+	</april>
+</Pay>
