@@ -5,49 +5,102 @@
 @using Microsoft.JSInterop
 @inject IJSRuntime JS
 
-<h1>XML Salary Processor</h1>
-<p>Загрузите файл Data1.xml или Data2.xml. Программа добавит атрибут SumAmount в корневой элемент &lt;Pay&gt; и создаст Employees.xml.</p>
+<div class="container mt-4">
+    <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white">
+            <h2 class="mb-0">Salary Processor — сводка по сотрудникам и месяцам</h2>
+        </div>
+        <div class="card-body">
+            <p class="lead">Загрузите XML файл (Data1.xml или Data2.xml). Программа покажет таблицу сотрудников с суммами выплат по каждому месяцу.</p>
 
-<div class="mb-3">
-    <label for="xmlFile" class="form-label">Выберите XML-файл</label>
-    <InputFile OnChange="OnFileSelected" accept=".xml" />
+            <div class="mb-4">
+                <label class="form-label fw-bold">Выберите XML-файл</label>
+                <InputFile OnChange="OnFileSelected" accept=".xml" class="form-control" />
+                <div class="form-text">Файлы до 10 МБ</div>
+            </div>
+
+            <div class="d-grid gap-2 d-md-block">
+                <button class="btn btn-primary" @onclick="ProcessFile" disabled="@(selectedFile == null || processing)">
+                    @(processing ? "Обработка..." : "Запустить программу")
+                    @if (processing)
+                    {
+                        <span class="spinner-border spinner-border-sm ms-2" role="status"></span>
+                    }
+                </button>
+            </div>
+
+            @if (summaryData != null && summaryData.Any())
+            {
+                <hr />
+                <h4 class="mt-3">Сводка по сотрудникам</h4>
+                <div class="table-responsive">
+                    <table class="table table-bordered table-striped table-hover">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Сотрудник</th>
+                                @foreach (var month in allMonths)
+                                {
+                                    <th>@CultureInfo.CurrentCulture.TextInfo.ToTitleCase(month)</th>
+                                }
+                                <th>Итого (SumSalary)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var emp in summaryData)
+                            {
+                                <tr>
+                                    <td><strong>@emp.Name @emp.Surname</strong></td>
+                                    @foreach (var month in allMonths)
+                                    {
+                                        var amount = emp.MonthlySum.ContainsKey(month) ? emp.MonthlySum[month] : 0m;
+                                        <td>@amount.ToString("N2", CultureInfo.InvariantCulture)</td>
+                                    }
+                                    <td><strong>@emp.TotalSalary.ToString("N2", CultureInfo.InvariantCulture)</strong></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-3">
+                    <button class="btn btn-secondary me-2" @onclick="DownloadEmployeesFile">📄 Скачать Employees.xml</button>
+                    <button class="btn btn-success" @onclick="DownloadUpdatedOriginal">📥 Скачать обновлённый входной файл</button>
+                </div>
+            }
+            else if (processed && (summaryData == null || !summaryData.Any()))
+            {
+                <div class="alert alert-warning mt-3">Нет данных для отображения. Файл не содержит элементов &lt;item&gt;.</div>
+            }
+
+            @if (!string.IsNullOrEmpty(log))
+            {
+                <div class="card mt-4">
+                    <div class="card-header bg-secondary text-white">Лог выполнения</div>
+                    <div class="card-body p-0">
+                        <pre class="bg-light p-3 mb-0" style="max-height: 300px; overflow: auto;">@log</pre>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
 </div>
-
-<button class="btn btn-primary" @onclick="ProcessFile" disabled="@(selectedFile == null || processing)">
-    @(processing ? "Обработка..." : "Обработать")
-</button>
-
-<h3 class="mt-4">Лог выполнения</h3>
-<pre class="border p-3 bg-light" style="max-height: 300px; overflow-y: auto;">@log</pre>
-
-@if (downloadOriginalAvailable)
-{
-    <div class="mt-3">
-        <button class="btn btn-success" @onclick="DownloadUpdatedOriginal">Скачать обновлённый входной файл (с SumAmount)</button>
-    </div>
-}
-@if (downloadEmployeesAvailable)
-{
-    <div class="mt-2">
-        <button class="btn btn-secondary" @onclick="DownloadEmployeesFile">Скачать Employees.xml</button>
-    </div>
-}
 
 @code {
     private IBrowserFile? selectedFile;
     private bool processing = false;
+    private bool processed = false;
     private string log = "";
     private byte[]? updatedOriginalContent;
     private byte[]? employeesContent;
-    private bool downloadOriginalAvailable = false;
-    private bool downloadEmployeesAvailable = false;
+    private List<EmployeeSummary>? summaryData;
+    private List<string> allMonths = new List<string>();
 
     private void OnFileSelected(InputFileChangeEventArgs e)
     {
         selectedFile = e.File;
         log = "";
-        downloadOriginalAvailable = false;
-        downloadEmployeesAvailable = false;
+        processed = false;
+        summaryData = null;
         updatedOriginalContent = null;
         employeesContent = null;
         StateHasChanged();
@@ -65,15 +118,21 @@
             await selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).CopyToAsync(memoryStream);
             memoryStream.Position = 0;
             var originalBytes = memoryStream.ToArray();
-            AppendLog($"Файл загружен, размер: {originalBytes.Length} байт");
 
-            var result = ProcessXml(originalBytes, selectedFile.Name);
-            updatedOriginalContent = result.UpdatedOriginal;
-            employeesContent = result.EmployeesXml;
-            downloadOriginalAvailable = updatedOriginalContent != null;
-            downloadEmployeesAvailable = employeesContent != null;
+            var (updatedXmlBytes, employeesBytes, summary) = ProcessXml(originalBytes);
+            updatedOriginalContent = updatedXmlBytes;
+            employeesContent = employeesBytes;
+            summaryData = summary;
+            processed = true;
 
-            AppendLog("Обработка успешно завершена.");
+            // Собираем все месяцы из данных для заголовков таблицы
+            allMonths = summaryData
+                .SelectMany(e => e.MonthlySum.Keys)
+                .Distinct()
+                .OrderBy(m => GetMonthNumber(m))
+                .ToList();
+
+            AppendLog($"Обработка завершена. Найдено {summaryData.Count} сотрудников.");
         }
         catch (Exception ex)
         {
@@ -85,107 +144,93 @@
         }
     }
 
-    private (byte[]? UpdatedOriginal, byte[]? EmployeesXml) ProcessXml(byte[] inputFileBytes, string fileName)
+    private (byte[] UpdatedOriginal, byte[] EmployeesXml, List<EmployeeSummary> Summary) ProcessXml(byte[] inputFileBytes)
     {
-        try
+        XDocument doc;
+        using (var stream = new MemoryStream(inputFileBytes))
         {
-            XDocument doc;
-            using (var stream = new MemoryStream(inputFileBytes))
-            {
-                doc = XDocument.Load(stream);
-            }
-
-            var root = doc.Root;
-            if (root != null && root.Name.LocalName == "Pay")
-            {
-                decimal totalSum = 0m;
-                var allItems = doc.Descendants("item");
-                foreach (var item in allItems)
-                {
-                    string amountStr = (string)item.Attribute("amount");
-                    totalSum += ParseAmountDecimal(amountStr);
-                }
-                decimal roundedTotal = Math.Round(totalSum, 2, MidpointRounding.AwayFromZero);
-                string sumValue = roundedTotal.ToString(CultureInfo.InvariantCulture);
-
-                var sumAttr = root.Attribute("SumAmount");
-                if (sumAttr == null)
-                    root.Add(new XAttribute("SumAmount", sumValue));
-                else
-                    sumAttr.Value = sumValue;
-
-                AppendLog($"Добавлен/обновлён атрибут SumAmount = {sumValue}");
-            }
-            else
-            {
-                AppendLog("Корневой элемент не <Pay>, пропускаем добавление SumAmount.");
-            }
-
-            byte[] updatedOriginal;
-            using (var ms = new MemoryStream())
-            {
-                doc.Save(ms);
-                updatedOriginal = ms.ToArray();
-            }
-
-            var employeesDoc = TransformToEmployees(doc);
-            byte[] employeesBytes;
-            using (var ms = new MemoryStream())
-            {
-                employeesDoc.Save(ms);
-                employeesBytes = ms.ToArray();
-            }
-
-            AppendLog("Employees.xml сформирован.");
-            return (updatedOriginal, employeesBytes);
+            doc = XDocument.Load(stream);
         }
-        catch (Exception ex)
+
+        // 1. Добавляем SumAmount
+        var root = doc.Root;
+        if (root != null && root.Name.LocalName == "Pay")
         {
-            AppendLog($"Ошибка обработки: {ex.Message}");
-            return (null, null);
+            decimal totalSum = 0m;
+            var allItems = doc.Descendants("item");
+            foreach (var item in allItems)
+                totalSum += ParseAmountDecimal((string)item.Attribute("amount"));
+            decimal roundedTotal = Math.Round(totalSum, 2, MidpointRounding.AwayFromZero);
+            var attr = root.Attribute("SumAmount");
+            if (attr == null) root.Add(new XAttribute("SumAmount", roundedTotal.ToString(CultureInfo.InvariantCulture)));
+            else attr.Value = roundedTotal.ToString(CultureInfo.InvariantCulture);
+            AppendLog($"Добавлен SumAmount = {roundedTotal}");
         }
-    }
 
-    private XDocument TransformToEmployees(XDocument inputDoc)
-    {
-        var items = inputDoc.Descendants("item");
+        // 2. Преобразование в Employees.xml и сбор сводки
+        var items = doc.Descendants("item");
         var groups = items.GroupBy(item => new { Name = (string)item.Attribute("name"), Surname = (string)item.Attribute("surname") });
 
-        XDocument outputDoc = new XDocument(new XElement("Employees"));
-        var root = outputDoc.Root;
+        XDocument employeesDoc = new XDocument(new XElement("Employees"));
+        var employeesRoot = employeesDoc.Root;
+        var summaryList = new List<EmployeeSummary>();
 
         foreach (var group in groups)
         {
             string name = group.Key.Name;
             string surname = group.Key.Surname;
 
-            XElement employee = new XElement("Employee",
+            XElement employeeXml = new XElement("Employee",
                 new XAttribute("name", name),
                 new XAttribute("surname", surname));
 
             decimal totalSalary = 0m;
+            var monthSumDict = new Dictionary<string, decimal>();
+
             foreach (var item in group)
             {
-                string mount = GetCorrectMount(item);
+                string month = GetCorrectMount(item);
                 string amountStr = (string)item.Attribute("amount");
                 decimal amount = ParseAmountDecimal(amountStr);
                 totalSalary += amount;
 
-                employee.Add(new XElement("salary",
+                if (monthSumDict.ContainsKey(month))
+                    monthSumDict[month] += amount;
+                else
+                    monthSumDict[month] = amount;
+
+                employeeXml.Add(new XElement("salary",
                     new XAttribute("amount", amountStr),
-                    new XAttribute("mount", mount)));
+                    new XAttribute("mount", month)));
             }
+
             decimal roundedTotal = Math.Round(totalSalary, 2, MidpointRounding.AwayFromZero);
-            employee.Add(new XAttribute("SumSalary", roundedTotal.ToString(CultureInfo.InvariantCulture)));
-            root!.Add(employee);
-            AppendLog($"Добавлен сотрудник {name} {surname} с суммой {roundedTotal}");
+            employeeXml.Add(new XAttribute("SumSalary", roundedTotal.ToString(CultureInfo.InvariantCulture)));
+            employeesRoot!.Add(employeeXml);
+
+            summaryList.Add(new EmployeeSummary
+            {
+                Name = name,
+                Surname = surname,
+                TotalSalary = roundedTotal,
+                MonthlySum = monthSumDict
+            });
+            AppendLog($"Сотрудник {name} {surname}: выплат за {monthSumDict.Count} месяцев, итого {roundedTotal}");
         }
-        return outputDoc;
+
+        // Сохраняем в байтовые массивы
+        byte[] updatedOriginalBytes;
+        using (var ms = new MemoryStream()) { doc.Save(ms); updatedOriginalBytes = ms.ToArray(); }
+
+        byte[] employeesBytes;
+        using (var ms = new MemoryStream()) { employeesDoc.Save(ms); employeesBytes = ms.ToArray(); }
+
+        return (updatedOriginalBytes, employeesBytes, summaryList);
     }
 
     private string GetCorrectMount(XElement item)
     {
-        XElement parent = item.Parent;
+        var parent = item.Parent;
         if (parent != null && parent.Name.LocalName == "Pay")
             return (string)item.Attribute("mount");
         else
@@ -210,16 +255,31 @@
     private async Task DownloadUpdatedOriginal()
     {
         if (updatedOriginalContent != null)
-        {
             await JS.InvokeVoidAsync("saveAsFile", "Data_updated.xml", Convert.ToBase64String(updatedOriginalContent));
-        }
     }
 
     private async Task DownloadEmployeesFile()
     {
         if (employeesContent != null)
-        {
             await JS.InvokeVoidAsync("saveAsFile", "Employees.xml", Convert.ToBase64String(employeesContent));
-        }
+    }
+
+    private int GetMonthNumber(string monthName)
+    {
+        return monthName.ToLower() switch
+        {
+            "january" => 1, "february" => 2, "march" => 3, "april" => 4,
+            "may" => 5, "june" => 6, "july" => 7, "august" => 8,
+            "september" => 9, "october" => 10, "november" => 11, "december" => 12,
+            _ => 99
+        };
+    }
+
+    public class EmployeeSummary
+    {
+        public string Name { get; set; } = "";
+        public string Surname { get; set; } = "";
+        public decimal TotalSalary { get; set; }
+        public Dictionary<string, decimal> MonthlySum { get; set; } = new();
     }
 }
