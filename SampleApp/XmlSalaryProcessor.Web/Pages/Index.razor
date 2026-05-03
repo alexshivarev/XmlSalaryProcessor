@@ -1,0 +1,225 @@
+@page "/"
+@using System.Xml.Linq
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+
+<h1>XML Salary Processor</h1>
+<p>Загрузите файл Data1.xml или Data2.xml. Программа добавит атрибут SumAmount в корневой элемент &lt;Pay&gt; и создаст Employees.xml.</p>
+
+<div class="mb-3">
+    <label for="xmlFile" class="form-label">Выберите XML-файл</label>
+    <InputFile OnChange="OnFileSelected" accept=".xml" />
+</div>
+
+<button class="btn btn-primary" @onclick="ProcessFile" disabled="@(selectedFile == null || processing)">
+    @(processing ? "Обработка..." : "Обработать")
+</button>
+
+<h3 class="mt-4">Лог выполнения</h3>
+<pre class="border p-3 bg-light" style="max-height: 300px; overflow-y: auto;">@log</pre>
+
+@if (downloadOriginalAvailable)
+{
+    <div class="mt-3">
+        <button class="btn btn-success" @onclick="DownloadUpdatedOriginal">Скачать обновлённый входной файл (с SumAmount)</button>
+    </div>
+}
+@if (downloadEmployeesAvailable)
+{
+    <div class="mt-2">
+        <button class="btn btn-secondary" @onclick="DownloadEmployeesFile">Скачать Employees.xml</button>
+    </div>
+}
+
+@code {
+    private IBrowserFile? selectedFile;
+    private bool processing = false;
+    private string log = "";
+    private byte[]? updatedOriginalContent;
+    private byte[]? employeesContent;
+    private bool downloadOriginalAvailable = false;
+    private bool downloadEmployeesAvailable = false;
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        log = "";
+        downloadOriginalAvailable = false;
+        downloadEmployeesAvailable = false;
+        updatedOriginalContent = null;
+        employeesContent = null;
+        StateHasChanged();
+    }
+
+    private async Task ProcessFile()
+    {
+        if (selectedFile == null) return;
+        processing = true;
+        log = "";
+        AppendLog("Загрузка файла...");
+        try
+        {
+            using var memoryStream = new MemoryStream();
+            await selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).CopyToAsync(memoryStream);
+            memoryStream.Position = 0;
+            var originalBytes = memoryStream.ToArray();
+            AppendLog($"Файл загружен, размер: {originalBytes.Length} байт");
+
+            var result = ProcessXml(originalBytes, selectedFile.Name);
+            updatedOriginalContent = result.UpdatedOriginal;
+            employeesContent = result.EmployeesXml;
+            downloadOriginalAvailable = updatedOriginalContent != null;
+            downloadEmployeesAvailable = employeesContent != null;
+
+            AppendLog("Обработка успешно завершена.");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Ошибка: {ex.Message}");
+        }
+        finally
+        {
+            processing = false;
+        }
+    }
+
+    private (byte[]? UpdatedOriginal, byte[]? EmployeesXml) ProcessXml(byte[] inputFileBytes, string fileName)
+    {
+        try
+        {
+            XDocument doc;
+            using (var stream = new MemoryStream(inputFileBytes))
+            {
+                doc = XDocument.Load(stream);
+            }
+
+            var root = doc.Root;
+            if (root != null && root.Name.LocalName == "Pay")
+            {
+                decimal totalSum = 0m;
+                var allItems = doc.Descendants("item");
+                foreach (var item in allItems)
+                {
+                    string amountStr = (string)item.Attribute("amount");
+                    totalSum += ParseAmountDecimal(amountStr);
+                }
+                decimal roundedTotal = Math.Round(totalSum, 2, MidpointRounding.AwayFromZero);
+                string sumValue = roundedTotal.ToString(CultureInfo.InvariantCulture);
+
+                var sumAttr = root.Attribute("SumAmount");
+                if (sumAttr == null)
+                    root.Add(new XAttribute("SumAmount", sumValue));
+                else
+                    sumAttr.Value = sumValue;
+
+                AppendLog($"Добавлен/обновлён атрибут SumAmount = {sumValue}");
+            }
+            else
+            {
+                AppendLog("Корневой элемент не <Pay>, пропускаем добавление SumAmount.");
+            }
+
+            byte[] updatedOriginal;
+            using (var ms = new MemoryStream())
+            {
+                doc.Save(ms);
+                updatedOriginal = ms.ToArray();
+            }
+
+            var employeesDoc = TransformToEmployees(doc);
+            byte[] employeesBytes;
+            using (var ms = new MemoryStream())
+            {
+                employeesDoc.Save(ms);
+                employeesBytes = ms.ToArray();
+            }
+
+            AppendLog("Employees.xml сформирован.");
+            return (updatedOriginal, employeesBytes);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Ошибка обработки: {ex.Message}");
+            return (null, null);
+        }
+    }
+
+    private XDocument TransformToEmployees(XDocument inputDoc)
+    {
+        var items = inputDoc.Descendants("item");
+        var groups = items.GroupBy(item => new { Name = (string)item.Attribute("name"), Surname = (string)item.Attribute("surname") });
+
+        XDocument outputDoc = new XDocument(new XElement("Employees"));
+        var root = outputDoc.Root;
+
+        foreach (var group in groups)
+        {
+            string name = group.Key.Name;
+            string surname = group.Key.Surname;
+
+            XElement employee = new XElement("Employee",
+                new XAttribute("name", name),
+                new XAttribute("surname", surname));
+
+            decimal totalSalary = 0m;
+            foreach (var item in group)
+            {
+                string mount = GetCorrectMount(item);
+                string amountStr = (string)item.Attribute("amount");
+                decimal amount = ParseAmountDecimal(amountStr);
+                totalSalary += amount;
+
+                employee.Add(new XElement("salary",
+                    new XAttribute("amount", amountStr),
+                    new XAttribute("mount", mount)));
+            }
+            decimal roundedTotal = Math.Round(totalSalary, 2, MidpointRounding.AwayFromZero);
+            employee.Add(new XAttribute("SumSalary", roundedTotal.ToString(CultureInfo.InvariantCulture)));
+            root!.Add(employee);
+            AppendLog($"Добавлен сотрудник {name} {surname} с суммой {roundedTotal}");
+        }
+        return outputDoc;
+    }
+
+    private string GetCorrectMount(XElement item)
+    {
+        XElement parent = item.Parent;
+        if (parent != null && parent.Name.LocalName == "Pay")
+            return (string)item.Attribute("mount");
+        else
+            return parent?.Name.LocalName ?? "";
+    }
+
+    private decimal ParseAmountDecimal(string amountStr)
+    {
+        if (string.IsNullOrEmpty(amountStr)) return 0m;
+        string normalized = amountStr.Replace(',', '.');
+        if (decimal.TryParse(normalized, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal result))
+            return result;
+        return 0m;
+    }
+
+    private void AppendLog(string message)
+    {
+        log += $"{DateTime.Now:HH:mm:ss} - {message}\n";
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task DownloadUpdatedOriginal()
+    {
+        if (updatedOriginalContent != null)
+        {
+            await JS.InvokeVoidAsync("saveAsFile", "Data_updated.xml", Convert.ToBase64String(updatedOriginalContent));
+        }
+    }
+
+    private async Task DownloadEmployeesFile()
+    {
+        if (employeesContent != null)
+        {
+            await JS.InvokeVoidAsync("saveAsFile", "Employees.xml", Convert.ToBase64String(employeesContent));
+        }
+    }
+}
