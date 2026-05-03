@@ -1,61 +1,123 @@
-# GitHub Codespaces ♥️ C#
+# 🧾 XmlSalaryProcessor
 
-Want to try out C# for web development? 
+**Проект для анализа и обработки зарплатных ведомостей из XML.**  
+Решение состоит из трёх частей: консольного приложения (BackEnd), веб-интерфейса (Blazor WebAssembly) и общей библиотеки логики (Core).
 
-This repo builds a Weather API, OpenAPI integration to test with [Scalar](https://learn.microsoft.com/aspnet/core/fundamentals/openapi/using-openapi-documents?view=aspnetcore-10.0#use-scalar-for-interactive-api-documentation), and displays the data in a web application using Blazor (.NET/C#).
+[🔗 Открыть репозиторий на GitHub](https://github.com/alexshivarev/XmlSalaryProcessor/tree/main/SampleApp)
 
-We've given you both a frontend and backend to play around with and where you go from here is up to you!
+---
 
-Everything you do here is contained within this one codespace. There is no repository on GitHub yet. If and when you’re ready you can click "Publish Branch" and we’ll create your repository and push up your project. If you were just exploring then and have no further need for this code then you can simply delete your codespace and it's gone forever.
+## 📌 Содержание
+- [📁 Структура проекта](#-структура-проекта)
+- [⚙️ Возможности](#️-возможности)
+- [✅ Требования](#-требования)
+- [🔥 Клонирование и сборка](#-клонирование-и-сборка)
+- [🖥️ Запуск консольной версии](#️-запуск-консольной-версии)
+- [🌐 Запуск веб-версии](#-запуск-веб-версии)
+- [🧪 Запуск тестов](#-запуск-тестов)
 
-### Run Options
+---
 
-[![Open in GitHub Codespaces](https://img.shields.io/static/v1?style=for-the-badge&label=GitHub+Codespaces&message=Open&color=lightgrey&logo=github)](https://codespaces.new/github/dotnet-codespaces)
-[![Open in Dev Container](https://img.shields.io/static/v1?style=for-the-badge&label=Dev+Container&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/github/dotnet-codespaces)
+## 📁 Структура проекта
 
-You can also run this repository locally by following these instructions: 
-1. Clone the repo to your local machine `git clone https://github.com/github/dotnet-codespaces`
-1. Open repo in VS Code
+```bash
+SampleApp/
+├── BackEnd/                     # Консольное приложение
+│   ├── Program.cs               # Точка входа
+│   ├── BackEnd.csproj
+│   ├── Data1.xml                # Пример входного файла
+│   └── Employees.xml            # Результат обработки
+├── BackEndTests/                # Юнит-тесты (xUnit)
+│   ├── TestData/                # Набор тестовых XML-файлов
+│   └── BackEndTests.csproj
+├── XmlSalaryProcessor.Core/     # Общая библиотека
+│   ├── SalaryProcessor.cs       # Вся логика парсинга и генерации
+│   └── XmlSalaryProcessor.Core.csproj
+├── XmlSalaryProcessor.Web/      # Blazor WebAssembly приложение
+│   ├── Pages/                   # Компоненты страниц (Index.razor)
+│   ├── Layout/                  # Основной макет
+│   ├── wwwroot/                 # Статические файлы (CSS, JS)
+│   ├── Program.cs
+│   ├── App.razor
+│   └── XmlSalaryProcessor.Web.csproj
+└── SampleApp.sln                # Файл решения
+```
+## ⚙️ Возможности
+Модуль	Функционал
+Общая библиотека (Core)	– Парсинг денежных сумм из атрибута amount (с учётом запятой как разделителя)
+– Добавление атрибута SumAmount в корневой элемент исходного XML
+– Генерация сводного файла Employees.xml с группировкой по сотрудникам и месяцам
+– Предотвращение дублирования записей за один месяц
+Консольное приложение (BackEnd)	– Пакетная обработка XML-файлов
+– Вывод предупреждений с указанием номера строки (ошибки парсинга, дубликаты)
+– Автоматический поиск тестовых файлов
+Веб-приложение (Blazor WebAssembly)	– Загрузка XML-файла через браузер (максимум 10 МБ)
+– Отображение сводной таблицы «Сотрудники × Месяцы» с итогами по строкам/столбцам
+– Хронологическая сортировка месяцев (рус./англ.)
+– Скачивание результирующего Employees.xml
+Юнит-тесты (xUnit)	– Проверка корректности генерации Employees.xml
+– Обработка дубликатов и пропущенных атрибутов
+– Тестирование на невалидном XML
 
-## Getting started
+## ✅ Требования
+.NET 9 SDK или новее (проект таргетирован на net10.0).
 
-1. **📤 One-click setup**: [Open a new Codespace](https://codespaces.new/github/dotnet-codespaces), giving you a fully configured cloud developer environment.
-2. **▶️ Run all, one-click again**: Use VS Code's built-in *Run* command and open the forwarded ports *8080* and *8081* in your browser. 
+## 🔥 Клонирование и сборка
+```bash
+git clone https://github.com/alexshivarev/XmlSalaryProcessor.git
+cd XmlSalaryProcessor/SampleApp
+dotnet restore
+dotnet build
+```
 
-![Debug menu in VS Code showing Run All](images/RunAll.png)
+## 🖥️ Запуск консольной версии
+Базовый запуск (с файлом Data1.xml из папки BackEnd):
+```bash
+cd BackEnd
+dotnet run
+```
 
-3. The Blazor web app and Scalar can be open by heading to **/scalar** in your browser. On Scalar, head to the backend API and click "Test Request" to call and test the API. 
+Указать другой входной файл:
+```bash
+dotnet run -- /absolute/or/relative/path/to/file.xml
+# или по относительному пути от корня решения:
+dotnet run -- ../BackEndTests/TestData/Data1_typical.xml
+```
 
-![A website showing weather](images/BlazorApp.png)
+Что произойдёт
+Исходный XML получит атрибут SumAmount в корневом элементе (сумма всех amount).
+Рядом с входным файлом будет созда/обновлён файл Employees.xml.
+В консоли будут выведены предупреждения о дубликатах месяцев, отсутствующих атрибутах, некорректных суммах и т.п.
 
-!["UI showing testing an API"](images/scalar.png)
+## 🌐 Запуск веб-версии
+```bash
+cd XmlSalaryProcessor.Web
+dotnet run
+```
 
+Откройте браузер по адресу, указанному в консоли (обычно https://localhost:5001).
 
-4. **🔄 Iterate quickly:** Codespaces updates the server on each save, and VS Code's debugger lets you dig into the code execution.
+Интерфейс
+1. Выберите XML-файл (до 10 МБ) и нажмите «Обработать».
+2. Будут выведены предупреждения (аналогично консольной версии).
+3. Отобразится сводная таблица:
+  Строки – сотрудники.
+  Столбцы – месяцы (в хронологическом порядке: январь, февраль …).
+  Последний столбец – суммарная зарплата сотрудника.
+  Нижняя строка – общая сумма выплат за каждый месяц и общий итог.
+  Нажмите «Скачать Employees.xml», чтобы сохранить результат обработки.
 
-5. To stop running, return to VS Code, and click Stop twice in the debug toolbar. 
+## 🧪 Запуск тестов
+Тесты расположены в проекте BackEndTests и основаны на xUnit.
+```bash
+cd BackEndTests
+dotnet test
+```
 
-![VS Code stop debuggin on both backend and frontend](images/StopRun.png)
-
-
-## Contributing
-
-This project welcomes contributions and suggestions.  Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-## Trademarks
-
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft 
-trademarks or logos is subject to and must follow 
-[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
-Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
-Any use of third-party trademarks or logos are subject to those third-party's policies.
+Проверяемые сценарии
+✅ Типовой корректный XML.
+✅ Пустой файл (или только корневой элемент без <item>).
+✅ Дублирующиеся месяцы у одного сотрудника.
+✅ Некорректные значения amount (буквы, пустые строки).
+✅ Отсутствие обязательных атрибутов (name, surname, mount, amount).
+✅ Невалидный XML (синтаксическая ошибка).
